@@ -1,0 +1,15 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "rst2md"
+authors = [{name = "Stephen Finucane", email = "stephen@that.guru"}]
+dynamic = ["version", "description"]
+dependencies = [
+    "docutils",
+]
+requires-python = ">= 3.9"
+
+[project.urls]
+Home = "https://github.com/stephenfin/rst2md"
