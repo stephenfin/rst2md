@@ -109,6 +109,12 @@ def _convert_section(ctx: Context, section: nodes.section) -> RetType:
             yield from _convert_literal_block(ctx, node)
         elif isinstance(node, nodes.block_quote):
             yield from _convert_block_quote(ctx, node)
+        elif isinstance(node, nodes.note):
+            yield from _convert_note(ctx, node)
+        elif isinstance(node, nodes.warning):
+            yield from _convert_warning(ctx, node)
+        elif isinstance(node, nodes.tip):
+            yield from _convert_tip(ctx, node)
         elif isinstance(node, nodes.reference):
             yield from _convert_reference(ctx, node)
         elif isinstance(node, nodes.target):
@@ -190,6 +196,42 @@ def _convert_block_quote(
             raise UnsupportedNode(node)
 
 
+def _convert_note(ctx: Context, note: nodes.note) -> RetType:
+    yield '> **Note**\n'
+    for node in note:
+        yield '> '
+        if isinstance(node, nodes.paragraph):
+            yield from _convert_paragraph(ctx, node)
+        elif isinstance(node, nodes.bullet_list):
+            yield from _convert_bullet_list(ctx, node)
+        else:
+            raise UnsupportedNode(node)
+
+
+def _convert_warning(ctx: Context, warning: nodes.warning) -> RetType:
+    yield '> **Warning**\n'
+    for node in warning:
+        yield '> '
+        if isinstance(node, nodes.paragraph):
+            yield from _convert_paragraph(ctx, node)
+        elif isinstance(node, nodes.bullet_list):
+            yield from _convert_bullet_list(ctx, node)
+        else:
+            raise UnsupportedNode(node)
+
+
+def _convert_tip(ctx: Context, tip: nodes.tip) -> RetType:
+    yield '> **Tip**\n'
+    for node in tip:
+        yield '> '
+        if isinstance(node, nodes.paragraph):
+            yield from _convert_paragraph(ctx, node)
+        elif isinstance(node, nodes.bullet_list):
+            yield from _convert_bullet_list(ctx, node)
+        else:
+            raise UnsupportedNode(node)
+
+
 def _convert_document(ctx: Context, document: nodes.document) -> RetType:
     for node in document:
         if isinstance(node, nodes.section):
@@ -231,6 +273,9 @@ def convert_rst_to_md(name: str, data: str) -> str:
     :returns: The converted document.
     """
     settings = frontend.get_default_settings(rst_parser.Parser)
+    # we don't want to do syntax highlighting in docutils: leave that to the
+    # markdown renderer
+    settings.syntax_highlight = 'none'
 
     document = utils.new_document(name, settings)
     rst_parser.Parser().parse(data, document)
