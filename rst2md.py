@@ -10,6 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import dataclasses
 import typing as ty
 
 from docutils import frontend
@@ -26,78 +27,86 @@ class UnsupportedNode(Exception):
         super().__init__(message)
 
 
-def _convert_text(text: nodes.Text, *, join=True) -> RetType:
+@dataclasses.dataclass
+class Context:
+    level: int = 0
+    references: dict[str, str] = dataclasses.field(default_factory=lambda: {})
+
+
+def _convert_text(ctx: Context, text: nodes.Text, *, join=True) -> RetType:
     ret = text.astext()
     if join:
         ret = ret.replace('\n', ' ')
     yield ret
 
 
-def _convert_literal(literal: nodes.literal) -> RetType:
+def _convert_literal(ctx: Context, literal: nodes.literal) -> RetType:
     yield f'`{literal.astext()}`'
 
 
-def _convert_emphasis(emphasis: nodes.emphasis) -> RetType:
+def _convert_emphasis(ctx: Context, emphasis: nodes.emphasis) -> RetType:
     yield f'*{emphasis.astext()}*'
 
 
-def _convert_strong(strong: nodes.strong) -> RetType:
+def _convert_strong(ctx: Context, strong: nodes.strong) -> RetType:
     yield f'**{strong.astext()}**'
 
 
-def _convert_image(image: nodes.image) -> RetType:
+def _convert_image(ctx: Context, image: nodes.image) -> RetType:
     alt = image.attributes.get('alt') or 'image'
     uri = image.attributes['uri']
     yield f'![{alt}]({uri})'
 
 
-def _convert_reference(reference: nodes.reference) -> RetType:
+def _convert_reference(ctx: Context, reference: nodes.reference) -> RetType:
     if 'name' in reference.attributes:  # text reference
         name = reference.attributes['name']
-        # TODO(stephenfin): If refuri is not set, this is a reference-style
-        # URL. We need global state to resolve this.
-        uri = reference.attributes.get('refuri') or '#'
+        if 'refuri' in reference.attributes:
+            uri = reference.attributes['refuri']
+        else:  # refname
+            uri = ctx.references[reference.attributes['refname']]
         yield f'[{name}]({uri})'
     elif isinstance(reference[0], nodes.image):  # image reference
-        yield from _convert_image(reference[0])
+        yield from _convert_image(ctx, reference[0])
     elif isinstance(reference[0], str):  # plain URL
         yield reference.attributes['refuri']
     else:
         raise UnsupportedNode(reference)
 
 
-def _convert_title(title: nodes.title) -> RetType:
-    yield f'# {title.astext()}\n'
+def _convert_title(ctx: Context, title: nodes.title) -> RetType:
+    prefix = '#' * (ctx.level + 1)
+    yield f'{prefix} {title.astext()}\n'
 
 
 def _convert_title_reference(
-    title_reference: nodes.title_reference,
+    ctx: Context, title_reference: nodes.title_reference
 ) -> RetType:
     # TODO(stephenfin): We should (potentially) point to a title but we need to
     # resolve these first
     yield f'{title_reference.astext()}'
 
 
-def _convert_section(section: nodes.section) -> RetType:
+def _convert_section(ctx: Context, section: nodes.section) -> RetType:
     for node in section:
         if isinstance(node, nodes.section):
-            # TODO(stephenfin): Here we'd want to increase section level (for
-            # things like headers)
-            yield from _convert_section(node)
+            ctx.level += 1
+            yield from _convert_section(ctx, node)
+            ctx.level -= 1
         elif isinstance(node, nodes.title):
-            yield from _convert_title(node)
+            yield from _convert_title(ctx, node)
         elif isinstance(node, nodes.paragraph):
-            yield from _convert_paragraph(node)
+            yield from _convert_paragraph(ctx, node)
         elif isinstance(node, nodes.bullet_list):
-            yield from _convert_bullet_list(node)
+            yield from _convert_bullet_list(ctx, node)
         elif isinstance(node, nodes.literal_block):
-            yield from _convert_literal_block(node)
+            yield from _convert_literal_block(ctx, node)
         elif isinstance(node, nodes.block_quote):
-            yield from _convert_block_quote(node)
+            yield from _convert_block_quote(ctx, node)
         elif isinstance(node, nodes.reference):
-            yield from _convert_reference(node)
+            yield from _convert_reference(ctx, node)
         elif isinstance(node, nodes.target):
-            # TODO(stephenfin): We should keep track of these
+            # There are skipped since they're already stored in ctx
             pass
         elif isinstance(node, nodes.comment):
             pass  # ignored
@@ -106,89 +115,110 @@ def _convert_section(section: nodes.section) -> RetType:
         yield '\n'
 
 
-def _convert_paragraph(paragraph: nodes.paragraph) -> RetType:
+def _convert_paragraph(ctx: Context, paragraph: nodes.paragraph) -> RetType:
     for node in paragraph:
         if isinstance(node, nodes.Text):
-            yield from _convert_text(node)
+            yield from _convert_text(ctx, node)
         elif isinstance(node, nodes.literal):
-            yield from _convert_literal(node)
+            yield from _convert_literal(ctx, node)
         elif isinstance(node, nodes.strong):
-            yield from _convert_strong(node)
+            yield from _convert_strong(ctx, node)
         elif isinstance(node, nodes.emphasis):
-            yield from _convert_emphasis(node)
+            yield from _convert_emphasis(ctx, node)
         elif isinstance(node, nodes.reference):
-            yield from _convert_reference(node)
+            yield from _convert_reference(ctx, node)
         elif isinstance(node, nodes.target):
-            # TODO(stephenfin): We should keep track of these
+            # There are skipped since they're already stored in ctx
             pass
         elif isinstance(node, nodes.title_reference):
-            yield from _convert_title_reference(node)
+            yield from _convert_title_reference(ctx, node)
         else:
             raise UnsupportedNode(node)
     yield '\n'
 
 
-def _convert_list_item(list_item: nodes.list_item) -> RetType:
+def _convert_list_item(ctx: Context, list_item: nodes.list_item) -> RetType:
     prefix = '- '
     for node in list_item:
         yield prefix
         if isinstance(node, nodes.paragraph):
-            yield from _convert_paragraph(node)
+            yield from _convert_paragraph(ctx, node)
         else:
             raise UnsupportedNode(node)
         prefix = '\n  '
 
 
-def _convert_bullet_list(bullet_list: nodes.bullet_list) -> RetType:
+def _convert_bullet_list(
+    ctx: Context, bullet_list: nodes.bullet_list
+) -> RetType:
     for node in bullet_list:
         if isinstance(node, nodes.list_item):
-            yield from _convert_list_item(node)
+            yield from _convert_list_item(ctx, node)
         else:
             raise UnsupportedNode(node)
 
 
-def _convert_literal_block(literal_block: nodes.literal_block) -> RetType:
+def _convert_literal_block(
+    ctx: Context, literal_block: nodes.literal_block
+) -> RetType:
     yield '```\n'
     for node in literal_block:
         if isinstance(node, nodes.Text):
-            yield from _convert_text(node, join=False)
+            yield from _convert_text(ctx, node, join=False)
         else:
             raise UnsupportedNode(node)
         yield '\n'
     yield '```\n'
 
 
-def _convert_block_quote(block_quote: nodes.block_quote) -> RetType:
+def _convert_block_quote(
+    ctx: Context, block_quote: nodes.block_quote
+) -> RetType:
     for node in block_quote:
         yield '> '
         if isinstance(node, nodes.paragraph):
-            yield from _convert_paragraph(node)
+            yield from _convert_paragraph(ctx, node)
         elif isinstance(node, nodes.bullet_list):
-            yield from _convert_bullet_list(node)
+            yield from _convert_bullet_list(ctx, node)
         else:
             raise UnsupportedNode(node)
 
 
-def _convert_document(document: nodes.document) -> RetType:
+def _convert_document(ctx: Context, document: nodes.document) -> RetType:
     for node in document:
         if isinstance(node, nodes.section):
-            yield from _convert_section(node)
+            yield from _convert_section(ctx, node)
         elif isinstance(node, nodes.paragraph):
-            yield from _convert_paragraph(node)
+            yield from _convert_paragraph(ctx, node)
         elif isinstance(node, nodes.bullet_list):
-            yield from _convert_bullet_list(node)
+            yield from _convert_bullet_list(ctx, node)
         elif isinstance(node, nodes.literal_block):
-            yield from _convert_literal_block(node)
+            yield from _convert_literal_block(ctx, node)
         else:
             raise UnsupportedNode(node)
         yield '\n'
+
+
+def _extract_references(
+    node: nodes.Node,
+) -> ty.Generator[tuple[str, str], None, None]:
+    for child_node in node:  # type: ignore
+        if isinstance(child_node, nodes.target):
+            uri = child_node.attributes['refuri']
+            for name in child_node.attributes['names']:
+                yield (name, uri)
+        elif isinstance(child_node, nodes.Text):
+            continue
+        else:
+            yield from _extract_references(child_node)
 
 
 def convert_rst_to_md(name: str, data: str) -> str:
     """Convert a reStructuredText document to Markdown.
 
     This is massively incomplete but (famous last words) it should be good
-    enough for our purposes.
+    enough for our purposes. It scans through the document twice: once to build
+    a list of references and again to build the Markdown document.
 
     :param name: The name of the source document.
     :param data: The contents of the source document.
@@ -199,7 +229,9 @@ def convert_rst_to_md(name: str, data: str) -> str:
     document = utils.new_document(name, settings)
     rst_parser.Parser().parse(data, document)
 
-    return ''.join(_convert_document(document)).strip()
+    references = _extract_references(document)
+    ctx = Context(references=dict(references))
+    return ''.join(_convert_document(ctx, document)).strip()
 
 
 if __name__ == '__main__':
