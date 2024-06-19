@@ -5,6 +5,7 @@ build-backend = "flit_core.buildapi"
 [project]
 name = "rst2md"
 authors = [{name = "Stephen Finucane", email = "stephen@that.guru"}]
+readme = "README.rst"
 dynamic = ["version", "description"]
 dependencies = [
     "docutils",

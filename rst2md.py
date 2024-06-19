@@ -14,7 +14,7 @@
 A utility and library to convert a reStructuredText document to Markdown.
 """
 
-__version__ = '0.1'
+__version__ = '0.1.1'
 
 import dataclasses
 import typing as ty
